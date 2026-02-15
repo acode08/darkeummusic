@@ -209,25 +209,7 @@ function LoyaltyPromoAdmin({ bookings }: { bookings: Booking[] }) {
         </div>
       )}
 
-      {/* Promo rules */}
-      <div className="mb-5 p-4 rounded-xl border border-white/[0.06] bg-white/[0.02]">
-        <p className="text-xs font-bold text-white/30 mb-2">
-          LOYALTY PROMO RULES
-        </p>
-        <ul className="text-[11px] text-white/40 space-y-1">
-          <li>
-            • For every <span className="text-dms-orange-light font-bold">15 hours</span> of total
-            booking = <span className="text-green-400 font-bold">1 FREE song live recording</span>
-          </li>
-          <li>• Maximum of 1 hour, 1 song live recording including video</li>
-          <li>• Once the recording is done less than an hour, the promo is done</li>
-          <li>• Recording time is strictly good for 1 hour</li>
-          <li>
-            • Final output will be uploaded on DarkEUM Music Studio FB Page
-          </li>
-        </ul>
-      </div>
-
+      
       {/* Full table */}
       {userStats.length > 0 ? (
         <div className="overflow-x-auto rounded-2xl border border-white/[0.06]">
@@ -354,6 +336,16 @@ function LoyaltyPromoAdmin({ bookings }: { bookings: Booking[] }) {
 /* ══════════════════════════════════════════════════════════════════
    Admin Quick Book Modal
    ══════════════════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════════════════════
+   Admin Quick Book Modal - UPDATED WITH START/END MARKERS
+   ══════════════════════════════════════════════════════════════════
+   
+   INSTRUCTIONS:
+   Replace the AdminQuickBookModal function in your admin.tsx file 
+   with this complete updated version.
+   
+   ══════════════════════════════════════════════════════════════════ */
+
 function AdminQuickBookModal({
   studioId,
   studioName,
@@ -373,6 +365,8 @@ function AdminQuickBookModal({
   const [password, setPassword] = useState("");
   const [bandName, setBandName] = useState("");
   const [selectedSlots, setSelectedSlots] = useState<string[]>([slot]);
+  const [startMarker, setStartMarker] = useState<string | null>(slot);
+  const [endMarker, setEndMarker] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [bookedSlots, setBookedSlots] = useState<string[]>([]);
@@ -460,9 +454,82 @@ function AdminQuickBookModal({
 
   const toggleSlot = (s: string) => {
     if (bookedSlots.includes(s)) return;
-    setSelectedSlots((prev) =>
-      prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]
-    );
+
+    setSelectedSlots((prev) => {
+      const clickedMinutes = slotToMinutes(s);
+
+      // If clicking an already-selected slot, clear everything
+      if (prev.includes(s)) {
+        setStartMarker(null);
+        setEndMarker(null);
+        return [];
+      }
+
+      // CASE 1: No slots selected - this is the START
+      if (prev.length === 0) {
+        setStartMarker(s);
+        setEndMarker(null);
+        return [s];
+      }
+
+      // CASE 2: Exactly one slot selected - autofill from START to END
+      if (prev.length === 1) {
+        const startSlot = prev[0];
+        const startMinutes = slotToMinutes(startSlot);
+
+        // Same slot clicked twice - do nothing
+        if (clickedMinutes === startMinutes) {
+          setEndMarker(null);
+          return prev;
+        }
+
+        // Determine range direction
+        let rangeStart: number;
+        let rangeEnd: number;
+        let actualStartSlot: string;
+        
+        if (clickedMinutes < startMinutes) {
+          // Clicking before start - swap
+          rangeStart = clickedMinutes;
+          rangeEnd = startMinutes;
+          actualStartSlot = s;
+        } else {
+          // Normal case - clicking after start
+          rangeStart = startMinutes;
+          rangeEnd = clickedMinutes;
+          actualStartSlot = startSlot;
+        }
+
+        // Build array of all slots in range (excluding end)
+        const filledSlots: string[] = [];
+        for (const timeSlot of TIME_SLOTS) {
+          const slotMinutes = slotToMinutes(timeSlot);
+          if (slotMinutes >= rangeStart && slotMinutes < rangeEnd) {
+            filledSlots.push(timeSlot);
+          }
+        }
+
+        // Check for conflicts
+        for (const filledSlot of filledSlots) {
+          if (bookedSlots.includes(filledSlot)) {
+            // Conflict found - reset to clicked slot as new start
+            setStartMarker(s);
+            setEndMarker(null);
+            return [s];
+          }
+        }
+
+        // Set the markers for visual feedback
+        setStartMarker(actualStartSlot);
+        setEndMarker(s);
+        return filledSlots;
+      }
+
+      // CASE 3: Multiple slots selected - reset to new start
+      setStartMarker(s);
+      setEndMarker(null);
+      return [s];
+    });
   };
 
   const isSlotBooked = (s: string) => bookedSlots.includes(s);
@@ -526,6 +593,9 @@ function AdminQuickBookModal({
               {visibleSlots.map((s) => {
                 const isBooked = isSlotBooked(s);
                 const isSelected = selectedSlots.includes(s);
+                const isStartMarkerSlot = startMarker === s;
+                const isEndMarkerSlot = endMarker === s;
+                
                 return (
                   <button
                     key={s}
@@ -534,15 +604,39 @@ function AdminQuickBookModal({
                     className={`p-2 rounded-md text-[11px] font-mono font-semibold transition-all ${
                       isBooked
                         ? "bg-red-500/10 text-red-400/30 cursor-not-allowed line-through"
+                        : isEndMarkerSlot
+                        ? "bg-blue-500/20 text-blue-400 border border-blue-500/40"
+                        : isStartMarkerSlot && selectedSlots.length === 1
+                        ? "bg-green-500/20 text-green-400 border border-green-500/40"
                         : isSelected
                         ? "bg-dms-orange text-black"
                         : "bg-white/[0.05] text-white/60 hover:bg-white/10"
                     }`}
                   >
-                    {s}
+                    <div>{s}</div>
+                    {isStartMarkerSlot && selectedSlots.length === 1 && (
+                      <div className="text-[8px] mt-0.5 font-bold text-green-400">START</div>
+                    )}
+                    {isStartMarkerSlot && selectedSlots.length > 1 && (
+                      <div className="text-[8px] mt-0.5 font-bold">START</div>
+                    )}
+                    {isEndMarkerSlot && (
+                      <div className="text-[8px] mt-0.5 font-bold text-blue-400">END</div>
+                    )}
                   </button>
                 );
               })}
+            </div>
+            <div className="flex items-center gap-3 text-[9px] font-semibold mt-2">
+              <span className="flex items-center gap-1 text-green-400">
+                <span className="w-2 h-2 rounded-sm bg-green-500/40" /> Start
+              </span>
+              <span className="flex items-center gap-1 text-dms-orange-light">
+                <span className="w-2 h-2 rounded-sm bg-dms-orange" /> Selected
+              </span>
+              <span className="flex items-center gap-1 text-blue-400">
+                <span className="w-2 h-2 rounded-sm bg-blue-500/40" /> End
+              </span>
             </div>
           </div>
 
@@ -1619,6 +1713,47 @@ export default function AdminPage() {
       });
   };
 
+const getBookingDetails = (studioId: string, date: string) => {
+  const isToday = date === todayPH();
+  
+  // Group slots by booking
+  const bookingMap = new Map<string, {
+    slots: string[];
+    name: string;
+    status: string;
+    receiptNo: string;
+  }>();
+
+  bookings
+    .filter(
+      (b) =>
+        b.studioId === studioId &&
+        b.date === date &&
+        (b.status === "confirmed" || b.status === "pending")
+    )
+    .forEach((b) => {
+      let slotsToInclude = b.timeSlots;
+      
+      if (b.checkedOutAt && isToday) {
+        const checkoutTime = new Date(b.checkedOutAt);
+        const checkoutMinutes =
+          checkoutTime.getHours() * 60 + checkoutTime.getMinutes();
+        slotsToInclude = b.timeSlots.filter(
+          (slot) => slotToMinutes(slot) < checkoutMinutes
+        );
+      }
+
+      bookingMap.set(b.id, {
+        slots: slotsToInclude.map(normalizeSlot),
+        name: b.userName,
+        status: b.status,
+        receiptNo: b.receiptNo,
+      });
+    });
+
+  return bookingMap;
+};
+  
   return (
     <div className="min-h-screen">
       <Navbar />
@@ -1655,112 +1790,119 @@ export default function AdminPage() {
           ))}
         </div>
 
-        {/* Studio Activity — with late warnings */}
-        {(() => {
-          const todayStr = todayPH();
-          const todayConfirmed = bookings.filter(
-            (b) => b.date === todayStr && b.status === "confirmed"
-          );
+      {/* Studio Activity — with late warnings */}
+{(() => {
+  const todayStr = todayPH();
+  const todayConfirmed = bookings.filter(
+    (b) => b.date === todayStr && b.status === "confirmed"
+  );
+  return (
+    <div className="mb-8">
+      <div className="flex items-center gap-3 mb-3">
+        <h3 className="text-[10px] font-black uppercase tracking-[2px] text-white/25">Studio Activity</h3>
+        <span className="h-px flex-1 bg-white/[0.05]" />
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+        {STUDIOS.map((studio) => {
+          const studioBookings = todayConfirmed.filter((b) => b.studioId === studio.id);
+          const inStudio = studioBookings.filter((b) => b.checkedInAt && !b.checkedOutAt);
+          const checkedOut = studioBookings.filter((b) => b.checkedOutAt);
+          const waiting = studioBookings.filter((b) => !b.checkedInAt);
+          const isOccupied = inStudio.length > 0;
+
           return (
-            <div className="mb-8">
-              <div className="flex items-center gap-3 mb-3">
-                <h3 className="text-[10px] font-black uppercase tracking-[2px] text-white/25">Studio Activity</h3>
-                <span className="h-px flex-1 bg-white/[0.05]" />
+            <div
+              key={studio.id}
+              className={`rounded-xl border p-4 transition-all ${
+                isOccupied
+                  ? "border-green-500/25 bg-green-500/[0.03]"
+                  : "border-white/[0.06] bg-white/[0.02]"
+              }`}
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <div className={`w-2.5 h-2.5 rounded-full ${isOccupied ? "bg-green-400 animate-pulse" : "bg-white/15"}`} />
+                  <span className="font-bold text-sm">{studio.name}</span>
+                </div>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${isOccupied ? "bg-green-500/15 text-green-400" : "bg-white/5 text-white/25"}`}>
+                  {isOccupied ? "Occupied" : "Available"}
+                </span>
               </div>
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-                {STUDIOS.map((studio) => {
-                  const studioBookings = todayConfirmed.filter((b) => b.studioId === studio.id);
-                  const inStudio = studioBookings.filter((b) => b.checkedInAt && !b.checkedOutAt);
-                  const checkedOut = studioBookings.filter((b) => b.checkedOutAt);
-                  const waiting = studioBookings.filter((b) => !b.checkedInAt);
-                  const isOccupied = inStudio.length > 0;
+
+              {inStudio.map((b) => (
+                <div key={b.id} className="p-2.5 rounded-lg bg-green-500/[0.06] border border-green-500/15 mb-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-sm text-green-300">{b.userName}</span>
+                    <span className="text-[10px] text-green-400/60">In: {new Date(b.checkedInAt!).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                  </div>
+                  <div className="flex items-center justify-between mt-1">
+                    <span className="text-[10px] text-green-400/40 font-mono">{b.receiptNo} • {getTimeRange(b)}</span>
+                    <button onClick={() => togglePaid(b.id, !!b.paid)} className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${b.paid ? "bg-green-500/15 text-green-400 border-green-500/25" : "bg-red-500/10 text-red-400 border-red-500/20"}`}>{b.paid ? "Paid" : "Unpaid"}</button>
+                  </div>
+                </div>
+              ))}
+
+              {checkedOut.map((b) => (
+                <div key={b.id} className="p-2.5 rounded-lg bg-white/[0.02] border border-white/[0.04] mb-2 opacity-70">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-xs text-white/50">{b.userName}</span>
+                    <span className="text-[10px] text-white/25">
+                      {new Date(b.checkedInAt!).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} — {new Date(b.checkedOutAt!).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between mt-1">
+                    <span className="text-[10px] text-white/15 font-mono">
+                      {b.receiptNo} • {b.autoCheckedOut ? (<span className="text-red-400/70">Auto checked out</span>) : "Done"}
+                    </span>
+                    <button onClick={() => togglePaid(b.id, !!b.paid)} className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${b.paid ? "bg-green-500/15 text-green-400 border-green-500/25" : "bg-red-500/10 text-red-400 border-red-500/20"}`}>{b.paid ? "Paid" : "Unpaid"}</button>
+                  </div>
+                </div>
+              ))}
+
+              {/* Waiting with late warnings - SORTED BY START TIME */}
+              {waiting
+                .sort((a, b) => {
+                  // Sort by earliest start time
+                  const aStart = Math.min(...a.timeSlots.map(slotToMinutes));
+                  const bStart = Math.min(...b.timeSlots.map(slotToMinutes));
+                  return aStart - bStart;
+                })
+                .map((b) => {
+                  const sortedSlots = [...b.timeSlots].sort((a, c) => slotToMinutes(a) - slotToMinutes(c));
+                  const startMin = slotToMinutes(sortedSlots[0]);
+                  const minsLate = nowMins - startMin;
+                  const isLate = minsLate > 0;
+                  const isDanger = minsLate >= NO_SHOW_WARN_MINUTES;
 
                   return (
-                    <div
-                      key={studio.id}
-                      className={`rounded-xl border p-4 transition-all ${
-                        isOccupied
-                          ? "border-green-500/25 bg-green-500/[0.03]"
-                          : "border-white/[0.06] bg-white/[0.02]"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center gap-2">
-                          <div className={`w-2.5 h-2.5 rounded-full ${isOccupied ? "bg-green-400 animate-pulse" : "bg-white/15"}`} />
-                          <span className="font-bold text-sm">{studio.name}</span>
-                        </div>
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${isOccupied ? "bg-green-500/15 text-green-400" : "bg-white/5 text-white/25"}`}>
-                          {isOccupied ? "Occupied" : "Available"}
+                    <div key={b.id} className={`p-2.5 rounded-lg mb-2 border ${isDanger ? "bg-red-500/[0.06] border-red-500/20" : isLate ? "bg-yellow-500/[0.04] border-yellow-500/15" : "bg-white/[0.02] border-white/[0.04]"}`}>
+                      <div className="flex items-center justify-between">
+                        <span className={`font-bold text-xs ${isDanger ? "text-red-400" : isLate ? "text-yellow-400" : "text-white/50"}`}>{b.userName}</span>
+                        <span className={`text-[10px] font-bold ${isDanger ? "text-red-400" : isLate ? "text-yellow-400" : "text-white/25"}`}>
+                          {isDanger
+                            ? `${minsLate} min late — cancels at ${NO_SHOW_CANCEL_MINUTES}m`
+                            : isLate
+                            ? `${minsLate} min late`
+                            : `Starts ${formatTime(sortedSlots[0])}`}
                         </span>
                       </div>
-
-                      {inStudio.map((b) => (
-                        <div key={b.id} className="p-2.5 rounded-lg bg-green-500/[0.06] border border-green-500/15 mb-2">
-                          <div className="flex items-center justify-between">
-                            <span className="font-bold text-sm text-green-300">{b.userName}</span>
-                            <span className="text-[10px] text-green-400/60">In: {new Date(b.checkedInAt!).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
-                          </div>
-                          <div className="flex items-center justify-between mt-1">
-                            <span className="text-[10px] text-green-400/40 font-mono">{b.receiptNo} • {getTimeRange(b)}</span>
-                            <button onClick={() => togglePaid(b.id, !!b.paid)} className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${b.paid ? "bg-green-500/15 text-green-400 border-green-500/25" : "bg-red-500/10 text-red-400 border-red-500/20"}`}>{b.paid ? "Paid" : "Unpaid"}</button>
-                          </div>
-                        </div>
-                      ))}
-
-                      {checkedOut.map((b) => (
-                        <div key={b.id} className="p-2.5 rounded-lg bg-white/[0.02] border border-white/[0.04] mb-2 opacity-70">
-                          <div className="flex items-center justify-between">
-                            <span className="font-semibold text-xs text-white/50">{b.userName}</span>
-                            <span className="text-[10px] text-white/25">
-                              {new Date(b.checkedInAt!).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} — {new Date(b.checkedOutAt!).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between mt-1">
-                            <span className="text-[10px] text-white/15 font-mono">
-                              {b.receiptNo} • {b.autoCheckedOut ? (<span className="text-red-400/70">Auto checked out</span>) : "Done"}
-                            </span>
-                            <button onClick={() => togglePaid(b.id, !!b.paid)} className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${b.paid ? "bg-green-500/15 text-green-400 border-green-500/25" : "bg-red-500/10 text-red-400 border-red-500/20"}`}>{b.paid ? "Paid" : "Unpaid"}</button>
-                          </div>
-                        </div>
-                      ))}
-
-                      {/* Waiting with late warnings */}
-                      {waiting.map((b) => {
-                        const sortedSlots = [...b.timeSlots].sort((a, c) => slotToMinutes(a) - slotToMinutes(c));
-                        const startMin = slotToMinutes(sortedSlots[0]);
-                        const minsLate = nowMins - startMin;
-                        const isLate = minsLate > 0;
-                        const isDanger = minsLate >= NO_SHOW_WARN_MINUTES;
-
-                        return (
-                          <div key={b.id} className={`p-2.5 rounded-lg mb-2 border ${isDanger ? "bg-red-500/[0.06] border-red-500/20" : isLate ? "bg-yellow-500/[0.04] border-yellow-500/15" : "bg-white/[0.02] border-white/[0.04]"}`}>
-                            <div className="flex items-center justify-between">
-                              <span className={`font-bold text-xs ${isDanger ? "text-red-400" : isLate ? "text-yellow-400" : "text-white/50"}`}>{b.userName}</span>
-                              <span className={`text-[10px] font-bold ${isDanger ? "text-red-400" : isLate ? "text-yellow-400" : "text-white/25"}`}>
-                                {isDanger
-                                  ? `${minsLate} min late — cancels at ${NO_SHOW_CANCEL_MINUTES}m`
-                                  : isLate
-                                  ? `${minsLate} min late`
-                                  : `Starts ${formatTime(sortedSlots[0])}`}
-                              </span>
-                            </div>
-                            <div className="text-[10px] text-white/25 font-mono mt-0.5">
-                              {b.receiptNo} • {getTimeRange(b)}
-                            </div>
-                          </div>
-                        );
-                      })}
-
-                      {studioBookings.length === 0 && (
-                        <p className="text-[11px] text-white/15">No bookings today</p>
-                      )}
+                      <div className="text-[10px] text-white/25 font-mono mt-0.5">
+                        {b.receiptNo} • {getTimeRange(b)}
+                      </div>
                     </div>
                   );
                 })}
-              </div>
+
+              {studioBookings.length === 0 && (
+                <p className="text-[11px] text-white/15">No bookings today</p>
+              )}
             </div>
           );
-        })()}
+        })}
+      </div>
+    </div>
+  );
+})()}
 
         {/* Tabs */}
         <div className="flex gap-1 mb-6 p-1 bg-white/[0.02] rounded-xl inline-flex flex-wrap">
@@ -1790,65 +1932,112 @@ export default function AdminPage() {
           ))}
         </div>
 
-        {tab === "schedule" && (
-          <div className="animate-fade-in">
-            <ScheduleDatePicker
-              selectedDate={filterDate}
-              onSelect={setFilterDate}
-              bookings={bookings}
-            />
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              {STUDIOS.map((studio) => {
-                const slotData = getBookedSlots(studio.id, filterDate);
+       {tab === "schedule" && (
+  <div className="animate-fade-in">
+    <ScheduleDatePicker
+      selectedDate={filterDate}
+      onSelect={setFilterDate}
+      bookings={bookings}
+    />
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {STUDIOS.map((studio) => {
+        const bookingDetails = getBookingDetails(studio.id, filterDate);
+        const allBookedSlots = Array.from(bookingDetails.values()).flatMap(b => b.slots);
+        
+        return (
+          <div key={studio.id} className="rounded-2xl overflow-hidden border border-dms-orange/10 bg-dms-dark">
+            <div className="p-4 bg-dms-orange/[0.06] border-b border-dms-orange/10 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-3 h-3 rounded-full bg-dms-orange" />
+                <span className="font-bold">{studio.name}</span>
+              </div>
+              <span className="text-xs font-mono text-dms-orange-light">
+                {allBookedSlots.length}/{TIME_SLOTS.length} booked
+              </span>
+            </div>
+            <div className="p-3 grid grid-cols-4 gap-1.5">
+              {TIME_SLOTS.map((slot) => {
+                // Find which booking (if any) contains this slot
+                let bookingInfo: { 
+                  name: string; 
+                  status: string; 
+                  isStart: boolean; 
+                  isEnd: boolean;
+                  receiptNo: string;
+                } | null = null;
+
+                for (const [bookingId, details] of bookingDetails) {
+                  if (details.slots.includes(slot)) {
+                    const sortedSlots = [...details.slots].sort(
+                      (a, b) => slotToMinutes(a) - slotToMinutes(b)
+                    );
+                    bookingInfo = {
+                      name: details.name,
+                      status: details.status,
+                      receiptNo: details.receiptNo,
+                      isStart: sortedSlots[0] === slot,
+                      isEnd: sortedSlots[sortedSlots.length - 1] === slot,
+                    };
+                    break;
+                  }
+                }
+
+                const isPending = bookingInfo?.status === "pending";
+                const isBooked = bookingInfo !== null;
+
                 return (
-                  <div key={studio.id} className="rounded-2xl overflow-hidden border border-dms-orange/10 bg-dms-dark">
-                    <div className="p-4 bg-dms-orange/[0.06] border-b border-dms-orange/10 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="w-3 h-3 rounded-full bg-dms-orange" />
-                        <span className="font-bold">{studio.name}</span>
+                  <div
+                    key={slot}
+                    onDoubleClick={() => {
+                      if (!isBooked) {
+                        setQuickBookModal({ 
+                          studioId: studio.id, 
+                          studioName: studio.name, 
+                          slot 
+                        });
+                      }
+                    }}
+                    className={`p-2 rounded-lg text-center text-[11px] font-mono border cursor-pointer transition-all ${
+                      isPending
+                        ? "border-yellow-500/20 bg-yellow-500/10 text-yellow-400"
+                        : isBooked
+                        ? "border-dms-orange/20 bg-dms-orange/10 text-dms-orange-light"
+                        : "border-white/[0.03] bg-white/[0.01] text-white/20 hover:border-dms-orange/30"
+                    }`}
+                  >
+                    <div className="flex items-center justify-center gap-1">
+                      <span>{slot}</span>
+                      {bookingInfo?.isStart && (
+                        <span className={`w-1.5 h-1.5 rounded-full ${
+                          isPending ? "bg-yellow-400" : "bg-green-400"
+                        }`} title="Start" />
+                      )}
+                      {bookingInfo?.isEnd && (
+                        <span className={`w-1.5 h-1.5 rounded-full ${
+                          isPending ? "bg-yellow-400" : "bg-blue-400"
+                        }`} title="End" />
+                      )}
+                    </div>
+                    {bookingInfo && (
+                      <div className={`text-[9px] mt-0.5 truncate ${
+                        isPending ? "text-yellow-400/60" : "text-white/40"
+                      }`}>
+                        {bookingInfo.name.split(" ")[0]}
                       </div>
-                      <span className="text-xs font-mono text-dms-orange-light">{slotData.length}/{TIME_SLOTS.length} booked</span>
-                    </div>
-                    <div className="p-3 grid grid-cols-4 gap-1.5">
-                      {TIME_SLOTS.map((slot) => {
-                        const found = slotData.find((s) => s.slot === slot);
-                        const isPending = found?.status === "pending";
-                        return (
-                          <div
-                            key={slot}
-                            onDoubleClick={() => {
-                              if (!found) {
-                                setQuickBookModal({ studioId: studio.id, studioName: studio.name, slot });
-                              }
-                            }}
-                            className={`p-2 rounded-lg text-center text-[11px] font-mono border cursor-pointer ${
-                              isPending
-                                ? "border-yellow-500/20 bg-yellow-500/10 text-yellow-400"
-                                : found
-                                ? "border-dms-orange/20 bg-dms-orange/10 text-dms-orange-light"
-                                : "border-white/[0.03] bg-white/[0.01] text-white/20 hover:border-dms-orange/30"
-                            }`}
-                          >
-                            {slot}
-                            {found && (
-                              <div className={`text-[9px] mt-0.5 truncate ${isPending ? "text-yellow-400/60" : "text-white/40"}`}>
-                                {found.name.split(" ")[0]}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
+                    )}
                   </div>
                 );
               })}
             </div>
-            <p className="text-xs text-white/20 mt-3 text-center">
-              Double-click an empty time slot to quick book
-            </p>
           </div>
-        )}
-
+        );
+      })}
+    </div>
+    <p className="text-xs text-white/20 mt-3 text-center">
+      Double-click an empty time slot to quick book
+    </p>
+  </div>
+)}
         {tab === "pending" && (
           <div className="animate-fade-in">
             <h2 className="text-xl font-bold mb-4 flex items-center gap-3">

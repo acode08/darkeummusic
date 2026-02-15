@@ -37,6 +37,7 @@ function todayPH(): string {
   });
 }
 
+// End time = last slot + 30 mins (each slot is a 30-min block)
 function calculateEndTime(slots: string[]): string {
   if (slots.length === 0) return "";
   const sorted = [...slots].sort(
@@ -62,6 +63,8 @@ export default function BookingForm({ studio }: BookingFormProps) {
   const { user, userData } = useAuth();
   const [selectedDate, setSelectedDate] = useState(todayPH());
   const [selectedSlots, setSelectedSlots] = useState<string[]>([]);
+  const [startMarker, setStartMarker] = useState<string | null>(null);
+  const [endMarker, setEndMarker] = useState<string | null>(null);
   const [bookedSlots, setBookedSlots] = useState<string[]>([]);
   const [pendingSlots, setPendingSlots] = useState<string[]>([]);
   const [mySlots, setMySlots] = useState<string[]>([]);
@@ -74,10 +77,13 @@ export default function BookingForm({ studio }: BookingFormProps) {
     date: string;
     startTime: string;
     endTime: string;
+    durationMins: number;
   } | null>(null);
 
+  // Each slot = 30 mins, billing = per slot
   const totalSlots = selectedSlots.length;
-  const totalHours = totalSlots * 0.5;
+  const durationMins = totalSlots * 30;
+  const totalHours = durationMins / 60;
   const totalAmount = totalSlots * RATE_PER_SLOT;
 
   const dates = Array.from({ length: 14 }, (_, i) => {
@@ -109,22 +115,18 @@ export default function BookingForm({ studio }: BookingFormProps) {
         const mine: string[] = [];
         const pending: string[] = [];
 
-        const now = currentMinutesPH();
         const isToday = selectedDate === todayPH();
 
         snapConfirmed.forEach((docSnap) => {
           const data = docSnap.data();
           let slots = data.timeSlots as string[];
 
-          // If booking is checked out early today, only count slots up to checkout time
           if (data.checkedOutAt && isToday) {
             const checkoutTime = new Date(data.checkedOutAt);
             const checkoutMinutes =
-              checkoutTime.getHours() * 60 +
-              checkoutTime.getMinutes();
+              checkoutTime.getHours() * 60 + checkoutTime.getMinutes();
             slots = slots.filter(
-              (slot: string) =>
-                slotToMinutes(slot) < checkoutMinutes
+              (slot: string) => slotToMinutes(slot) < checkoutMinutes
             );
           }
 
@@ -164,8 +166,26 @@ export default function BookingForm({ studio }: BookingFormProps) {
   const getSlotLabel = (
     slot: string
   ): { tag: string; style: string } | null => {
-    if (mySlots.includes(slot))
+    // Check if this is user's booking
+    if (mySlots.includes(slot)) {
+      // Find if this is the first or last slot in user's booking
+      const sortedMySlots = [...mySlots].sort(
+        (a, b) => slotToMinutes(a) - slotToMinutes(b)
+      );
+      const isFirstSlot = sortedMySlots[0] === slot;
+      const isLastSlot = sortedMySlots[sortedMySlots.length - 1] === slot;
+
+      if (isFirstSlot && sortedMySlots.length === 1) {
+        return { tag: "YOURS", style: "text-dms-orange/60" };
+      }
+      if (isFirstSlot) {
+        return { tag: "START", style: "text-dms-orange/70" };
+      }
+      if (isLastSlot) {
+        return { tag: "END", style: "text-dms-orange/70" };
+      }
       return { tag: "YOURS", style: "text-dms-orange/50" };
+    }
     if (bookedSlots.includes(slot))
       return { tag: "TAKEN", style: "text-red-500/40" };
     if (pendingSlots.includes(slot))
@@ -180,11 +200,82 @@ export default function BookingForm({ studio }: BookingFormProps) {
 
   const toggleSlot = (slot: string) => {
     if (isSlotDisabled(slot)) return;
-    setSelectedSlots((prev) =>
-      prev.includes(slot)
-        ? prev.filter((s) => s !== slot)
-        : [...prev, slot]
-    );
+
+    setSelectedSlots((prev) => {
+      const clickedMinutes = slotToMinutes(slot);
+
+      // If clicking an already-selected slot, clear everything
+      if (prev.includes(slot)) {
+        setStartMarker(null);
+        setEndMarker(null);
+        return [];
+      }
+
+      // CASE 1: No slots selected - this is the START
+      if (prev.length === 0) {
+        setStartMarker(slot);
+        setEndMarker(null);
+        return [slot];
+      }
+
+      // CASE 2: Exactly one slot selected - autofill from START to END
+      if (prev.length === 1) {
+        const startSlot = prev[0];
+        const startMinutes = slotToMinutes(startSlot);
+
+        // Same slot clicked twice - do nothing
+        if (clickedMinutes === startMinutes) {
+          setEndMarker(null);
+          return prev;
+        }
+
+        // Determine range direction
+        let rangeStart: number;
+        let rangeEnd: number;
+        let actualStartSlot: string;
+        
+        if (clickedMinutes < startMinutes) {
+          // Clicking before start - swap
+          rangeStart = clickedMinutes;
+          rangeEnd = startMinutes;
+          actualStartSlot = slot;
+        } else {
+          // Normal case - clicking after start
+          rangeStart = startMinutes;
+          rangeEnd = clickedMinutes;
+          actualStartSlot = startSlot;
+        }
+
+        // Build array of all slots in range (excluding end)
+        const filledSlots: string[] = [];
+        for (const timeSlot of TIME_SLOTS) {
+          const slotMinutes = slotToMinutes(timeSlot);
+          if (slotMinutes >= rangeStart && slotMinutes < rangeEnd) {
+            filledSlots.push(timeSlot);
+          }
+        }
+
+        // Check for conflicts
+        for (const filledSlot of filledSlots) {
+          if (bookedSlots.includes(filledSlot) || pendingSlots.includes(filledSlot)) {
+            // Conflict found - reset to clicked slot as new start
+            setStartMarker(slot);
+            setEndMarker(null);
+            return [slot];
+          }
+        }
+
+        // Set the markers for visual feedback
+        setStartMarker(actualStartSlot);
+        setEndMarker(slot);
+        return filledSlots;
+      }
+
+      // CASE 3: Multiple slots selected - reset to new start
+      setStartMarker(slot);
+      setEndMarker(null);
+      return [slot];
+    });
   };
 
   const sortSlots = (slots: string[]) =>
@@ -199,6 +290,11 @@ export default function BookingForm({ studio }: BookingFormProps) {
         "DMS-" +
         Date.now().toString().slice(-6) +
         Math.random().toString(36).slice(-2).toUpperCase();
+
+      const sorted = sortSlots(selectedSlots);
+      const startTime = sorted[0];
+      const endTime = calculateEndTime(selectedSlots);
+
       await addDoc(collection(db, "bookings"), {
         receiptNo,
         userId: user.uid,
@@ -208,18 +304,20 @@ export default function BookingForm({ studio }: BookingFormProps) {
         studioId: studio.id,
         studioName: studio.name,
         date: selectedDate,
-        timeSlots: sortSlots(selectedSlots),
+        timeSlots: sorted,
         hours: totalHours,
         amount: totalAmount,
         status: "pending" as const,
         createdAt: new Date().toISOString(),
       });
+
       setSubmittedInfo({
         hours: totalHours,
         amount: totalAmount,
         date: selectedDate,
-        startTime: sortSlots(selectedSlots)[0],
-        endTime: calculateEndTime(selectedSlots),
+        startTime,
+        endTime,
+        durationMins,
       });
       setSubmitted(true);
       setSelectedSlots([]);
@@ -259,15 +357,13 @@ export default function BookingForm({ studio }: BookingFormProps) {
             />
           </svg>
         </div>
-        <h2 className="text-3xl font-extrabold mb-2">
-          Booking Submitted!
-        </h2>
+        <h2 className="text-3xl font-extrabold mb-2">Booking Submitted!</h2>
         <p className="text-white/40 mb-2">
           Your booking has been sent for approval.
         </p>
         <p className="text-sm text-yellow-500/60 mb-8">
-          The admin will review your request. Once approved, your
-          receipt will be available in your dashboard.
+          The admin will review your request. Once approved, your receipt will
+          be available in your dashboard.
         </p>
 
         <div className="p-4 rounded-xl bg-white/[0.03] border border-white/[0.06] mb-6 text-left space-y-2">
@@ -290,13 +386,13 @@ export default function BookingForm({ studio }: BookingFormProps) {
           <div className="flex justify-between text-sm">
             <span className="text-white/35">Session Time</span>
             <span className="font-semibold">
-              {submittedInfo.startTime} - {submittedInfo.endTime}
+              {submittedInfo.startTime} – {submittedInfo.endTime}
             </span>
           </div>
           <div className="flex justify-between text-sm">
             <span className="text-white/35">Duration</span>
             <span className="font-semibold">
-              {Math.round(submittedInfo.hours * 60)} minutes
+              {submittedInfo.durationMins} minutes
             </span>
           </div>
           <div className="flex justify-between text-sm">
@@ -323,10 +419,7 @@ export default function BookingForm({ studio }: BookingFormProps) {
           >
             Book Another
           </button>
-          <Link
-            href="/dashboard"
-            className="btn-primary flex-1 text-center"
-          >
+          <Link href="/dashboard" className="btn-primary flex-1 text-center">
             Back to Dashboard
           </Link>
         </div>
@@ -376,29 +469,30 @@ export default function BookingForm({ studio }: BookingFormProps) {
           <label className="block text-xs font-bold tracking-[2px] uppercase text-white/30">
             Step 2 — Select Time Slots{" "}
             <span className="text-white/15 normal-case tracking-normal">
-              (30-min slots × ₱{RATE_PER_SLOT} = ₱{RATE_PER_HOUR}/hr)
+              (click start & end • ₱{RATE_PER_SLOT}/slot • ₱{RATE_PER_HOUR}/hr)
             </span>
           </label>
-          <div className="flex items-center gap-3 text-[10px] font-semibold">
+          <div className="flex items-center gap-3 text-[10px] font-semibold flex-wrap">
             <span className="flex items-center gap-1 text-white/30">
-              <span className="w-2 h-2 rounded-sm bg-white/10" />{" "}
-              Past
+              <span className="w-2 h-2 rounded-sm bg-white/10" /> Past
             </span>
             <span className="flex items-center gap-1 text-red-400/60">
-              <span className="w-2 h-2 rounded-sm bg-red-500/20" />{" "}
-              Taken
+              <span className="w-2 h-2 rounded-sm bg-red-500/20" /> Taken
             </span>
             <span className="flex items-center gap-1 text-yellow-400/60">
-              <span className="w-2 h-2 rounded-sm bg-yellow-500/20" />{" "}
-              Pending
+              <span className="w-2 h-2 rounded-sm bg-yellow-500/20" /> Pending
             </span>
             <span className="flex items-center gap-1 text-dms-orange/60">
-              <span className="w-2 h-2 rounded-sm bg-dms-orange/20" />{" "}
-              Yours
+              <span className="w-2 h-2 rounded-sm bg-dms-orange/20" /> Yours
+            </span>
+            <span className="flex items-center gap-1 text-green-400">
+              <span className="w-2 h-2 rounded-sm bg-green-500/40" /> Start
             </span>
             <span className="flex items-center gap-1 text-dms-orange-light">
-              <span className="w-2 h-2 rounded-sm bg-dms-orange/40" />{" "}
-              Selected
+              <span className="w-2 h-2 rounded-sm bg-dms-orange/40" /> Selected
+            </span>
+            <span className="flex items-center gap-1 text-blue-400">
+              <span className="w-2 h-2 rounded-sm bg-blue-500/40" /> End
             </span>
           </div>
         </div>
@@ -406,6 +500,8 @@ export default function BookingForm({ studio }: BookingFormProps) {
           {TIME_SLOTS.map((slot) => {
             const disabled = isSlotDisabled(slot);
             const isSelected = selectedSlots.includes(slot);
+            const isStartMarker = startMarker === slot;
+            const isEndMarker = endMarker === slot;
             const label = getSlotLabel(slot);
             const isMine = mySlots.includes(slot);
             const isTaken = bookedSlots.includes(slot);
@@ -430,16 +526,35 @@ export default function BookingForm({ studio }: BookingFormProps) {
                     ? "border-yellow-500/15 bg-yellow-500/[0.04] text-yellow-500/30 cursor-not-allowed"
                     : isPast
                     ? "border-white/[0.03] bg-white/[0.01] text-white/15 cursor-not-allowed"
+                    : isEndMarker
+                    ? "border-blue-500/40 bg-blue-500/10 text-blue-400 shadow-md shadow-blue-900/10 cursor-pointer"
+                    : isStartMarker && selectedSlots.length === 1
+                    ? "border-green-500/40 bg-green-500/10 text-green-400 shadow-md shadow-green-900/10"
+                    : isStartMarker
+                    ? "border-dms-orange bg-dms-orange/20 text-dms-orange-light shadow-md shadow-orange-900/10"
                     : isSelected
                     ? "border-dms-orange bg-dms-orange/15 text-dms-orange-light shadow-md shadow-orange-900/10"
                     : "border-white/[0.06] bg-white/[0.02] text-white/50 hover:border-dms-orange/30 hover:text-white/70 cursor-pointer"
                 }`}
               >
                 {slot}
-                {label && (
-                  <div
-                    className={`text-[9px] mt-0.5 font-bold ${label.style}`}
-                  >
+                {isStartMarker && selectedSlots.length === 1 && (
+                  <div className="text-[9px] mt-0.5 font-bold text-green-400">
+                    START
+                  </div>
+                )}
+                {isStartMarker && selectedSlots.length > 1 && (
+                  <div className="text-[9px] mt-0.5 font-bold text-dms-orange-light">
+                    START
+                  </div>
+                )}
+                {isEndMarker && (
+                  <div className="text-[9px] mt-0.5 font-bold text-blue-400">
+                    END
+                  </div>
+                )}
+                {!isStartMarker && !isEndMarker && label && (
+                  <div className={`text-[9px] mt-0.5 font-bold ${label.style}`}>
                     {label.tag}
                   </div>
                 )}
@@ -469,7 +584,7 @@ export default function BookingForm({ studio }: BookingFormProps) {
                   Session Time
                 </div>
                 <div className="text-sm font-bold">
-                  {sortSlots(selectedSlots)[0]} -{" "}
+                  {sortSlots(selectedSlots)[0]} –{" "}
                   {calculateEndTime(selectedSlots)}
                 </div>
               </div>
@@ -477,9 +592,7 @@ export default function BookingForm({ studio }: BookingFormProps) {
                 <div className="text-[10px] text-white/30 uppercase tracking-widest">
                   Duration
                 </div>
-                <div className="text-sm font-bold">
-                  {totalSlots * 30} mins
-                </div>
+                <div className="text-sm font-bold">{durationMins} mins</div>
               </div>
               <div>
                 <div className="text-[10px] text-white/30 uppercase tracking-widest">
@@ -530,17 +643,14 @@ export default function BookingForm({ studio }: BookingFormProps) {
                 },
                 {
                   label: "Session Time",
-                  value: `${sortSlots(selectedSlots)[0]} - ${calculateEndTime(selectedSlots)}`,
+                  value: `${sortSlots(selectedSlots)[0]} – ${calculateEndTime(selectedSlots)}`,
                 },
                 {
                   label: "Duration",
-                  value: `${totalSlots * 30} minutes`,
+                  value: `${durationMins} minutes`,
                 },
               ].map((row) => (
-                <div
-                  key={row.label}
-                  className="flex justify-between text-sm"
-                >
+                <div key={row.label} className="flex justify-between text-sm">
                   <span className="text-white/35">{row.label}</span>
                   <span className="font-semibold text-right max-w-[60%]">
                     {row.value}
@@ -554,14 +664,13 @@ export default function BookingForm({ studio }: BookingFormProps) {
                     ₱{totalAmount.toLocaleString()}
                   </div>
                   <div className="text-[10px] text-white/40 mt-0.5">
-                    {totalSlots} slots × ₱{RATE_PER_SLOT}
+                    {totalSlots} slot{totalSlots > 1 ? "s" : ""} × ₱{RATE_PER_SLOT}
                   </div>
                 </div>
               </div>
             </div>
             <div className="text-xs text-center text-yellow-500/60 mb-5">
-              Your booking will be PENDING until the admin approves
-              it.
+              Your booking will be PENDING until the admin approves it.
             </div>
             <div className="flex gap-3">
               <button
